@@ -6,14 +6,20 @@ using OpenCvSharp.Aruco;
 using Unity.VisualScripting;
 using Unity.Mathematics;
 
-public class PassthroughCameraViewer : MonoBehaviour
+public class MarkerDetecter : MonoBehaviour
 {
     [SerializeField] private PassthroughCameraAccess passthroughCameraAccess;
     [SerializeField] private TMPro.TextMeshProUGUI idsText;
-    [SerializeField] private GameObject cube;
+    [SerializeField] private GameObject markerAnchor;
+    // 실제 나타낼 모델
+    [SerializeField] private GameObject visualModel;
+
+    // 회전 보정
+    [SerializeField] Vector3 visualModelOffset = new Vector3(180f, 0f, -90f);
+    [SerializeField] private float markerSize = 19f;
 
     // 마커의 크기인 18mm의 절반 사이즈 사용
-    private float halfSize = 0.018f/2f;
+    private float halfSize = 0.019f/2f;
     // 마커 크기 나타내는 변수
     private Point3f[] objectPoints;
     // 카메라 파라미터 나타내는 변수
@@ -52,11 +58,6 @@ public class PassthroughCameraViewer : MonoBehaviour
         
         // quest 카메라 내부 파라이터 받기
         var intrinsics = passthroughCameraAccess.Intrinsics;
-
-        // Debug.Log($"CameraTest Sensor: {intrinsics.SensorResolution}");
-        // Debug.Log($"CameraTest Current: {passthroughCameraAccess.CurrentResolution}");
-        // Debug.Log($"CameraTest Focal: {intrinsics.FocalLength}");
-        // Debug.Log($"CameraTest Principal: {intrinsics.PrincipalPoint}");
 
         // 메타 패스스루 비율은 1280x1280이나, 카메라로 받는 실제 비율이 다를경우 그 값을 계산해 추후 카메라 정보 보정에 사용
         float cropY = (intrinsics.SensorResolution.y - passthroughCameraAccess.CurrentResolution.y) / 2f;
@@ -129,6 +130,13 @@ public class PassthroughCameraViewer : MonoBehaviour
             double[] rvec = null;
             // 마커 위치
             double[] tvec = null;
+            
+            string idsString = "";
+
+            for (int i = 0; i < ids.Length; i++)
+            {
+                idsString += ids[i] + ", ";
+            }
 
             // 마커, 코너 인식
             if (ids.Length > 0 && corners.Length > 0)
@@ -136,8 +144,7 @@ public class PassthroughCameraViewer : MonoBehaviour
                 // 마커 정보, 코너 정보, 카메라 정보, 외곡정보, 출력받을 변수
                 Cv2.SolvePnP(objectPoints, corners[0], cameraMatrix, distCoeffs, ref rvec, ref tvec);
                 // ui에 마커 위치 출력
-                idsText.text = $"ID: {ids[0]}\nx: {tvec[0]:F3}\ny: {tvec[1]:F3}\nz: {tvec[2]:F3}";
-
+                idsText.text = $"ID: {idsString}";
                 
                 worldRotation = RvecToWorldRotation(rvec);
                 // 카드 위치 보정값과 회전을 곱해 위치와 더해 실제 큐브가 나타날 위치를 조정함
@@ -145,14 +152,12 @@ public class PassthroughCameraViewer : MonoBehaviour
             }
             else
             {
-                idsText.text = "ID: n\nx: N\ny: N\nz: N";
+                idsText.text = "ID: None";
             }
             // 보간으로 부드럽게 움직이도록 구성
-            cube.transform.position = Vector3.Lerp(cube.transform.position, worldPosition, 0.6f);
-            cube.transform.rotation = Quaternion.Slerp(cube.transform.rotation, worldRotation, 0.3f);
-
-            
-
+            markerAnchor.transform.position = Vector3.Lerp(markerAnchor.transform.position, worldPosition, 0.6f);
+            markerAnchor.transform.rotation = Quaternion.Slerp(markerAnchor.transform.rotation, worldRotation, 0.4f);
+            visualModel.transform.localRotation = Quaternion.Euler(visualModelOffset);
 
             timer = 0;
         }
@@ -207,7 +212,7 @@ public class PassthroughCameraViewer : MonoBehaviour
         // 카메라의 월드 회전까지 곱해줘 회전 맞추기
         Quaternion worldRotation = cameraPose.rotation * m.rotation;
 
-        // 마커 회전에 맞추기 위한 반대 회전값 생성
+        // 마커 회전인 135도 보정
         Quaternion markerOffset = Quaternion.Euler(0f, 0f, 135f);
 
         // 행렬의 회전 반환
