@@ -4,9 +4,9 @@ using Meta.XR;
 using OpenCvSharp;
 using OpenCvSharp.Aruco;
 using System.Threading;
-using Unity.Mathematics;
+using UnityEngine.Rendering;
 using System.Diagnostics;
-using System;
+
 
 public class MarkerDetecter : MonoBehaviour
 {
@@ -48,6 +48,9 @@ public class MarkerDetecter : MonoBehaviour
     private double[,] cameraMatrix;
     // 렌즈 왜곡정보 변수
     private double[] distCoeffs;
+    // 이미지 크기
+    private int width = 1280;
+    private int height = 1280;
     
     private Dictionary dictionary;
 
@@ -70,6 +73,8 @@ public class MarkerDetecter : MonoBehaviour
     Vector3 detectPos;
     Vector3 currentPos;
     Vector3 stablePos;
+
+    private bool readbackPending = false;
 
     
 
@@ -103,12 +108,15 @@ public class MarkerDetecter : MonoBehaviour
             {0, 0, 1}
         };
 
+        width = passthroughCameraAccess.CurrentResolution.x;
+        height = passthroughCameraAccess.CurrentResolution.y;
+
         distCoeffs = new double[] {0, 0, 0, 0};
 
         // 스레드 시작
-        isRunning = true;
-        cvThread = new Thread(CVLoop);
-        cvThread.Start();
+        // isRunning = true;
+        // cvThread = new Thread(CVLoop);
+        // cvThread.Start();
 
     }
 
@@ -131,39 +139,28 @@ public class MarkerDetecter : MonoBehaviour
         // 지정한 주사율로 제한, 프레임이 사용되었을경우 정보 전달
         if (timer >= detectionInterval && needsFrame)
         {
-            Stopwatch sw = Stopwatch.StartNew();
             // passthroug같은 meta sdk는 메인 스레드에서 사용
             // 카메라로부터 정보 받기
-            var colors = passthroughCameraAccess.GetColors();
-            var cameraPose = passthroughCameraAccess.GetCameraPose();
-            sw.Stop();
-            double passMs = sw.Elapsed.TotalMilliseconds;
+            // var colors = passthroughCameraAccess.GetColors();
+            // var cameraPose = passthroughCameraAccess.GetCameraPose();
+            UnityEngine.Debug.Log("함수 호출");
+            RequestCameraReadback();
 
-            sw.Restart();
+            // // 컬러32 배열형태로 변형
+            // Color32[] pixels = colors.ToArray();
 
-            // 컬러32 배열형태로 변형
-            Color32[] pixels = colors.ToArray();
-            sw.Stop();
+            // lock (frameLock)
+            // {
+            //     latestPixels = pixels;
+            //     imageWidth = width;
+            //     imageHeight = height;
 
-            double arrayMs = sw.Elapsed.TotalMilliseconds;
+            //     latestCameraPosition = cameraPose.position;
+            //     latestCameraRotation = cameraPose.rotation;
 
-            idsText.text = $"passMS : {passMs}, array time : {arrayMs}";
-
-            int width = passthroughCameraAccess.CurrentResolution.x;
-            int height = passthroughCameraAccess.CurrentResolution.y;
-
-            lock (frameLock)
-            {
-                latestPixels = pixels;
-                imageWidth = width;
-                imageHeight = height;
-
-                latestCameraPosition = cameraPose.position;
-                latestCameraRotation = cameraPose.rotation;
-
-                hasNewFrame = true;
-            }
-            timer = 0;
+            //     hasNewFrame = true;
+            // }
+            // timer = 0;
         }
         int[] ids = null;
         double[] tvec = null;
@@ -200,6 +197,36 @@ public class MarkerDetecter : MonoBehaviour
         // 보간으로 부드럽게 움직이도록 구성
         markerAnchor.transform.position = Vector3.Lerp(markerAnchor.transform.position, worldPosition, 0.8f);
         markerAnchor.transform.rotation = Quaternion.Slerp(markerAnchor.transform.rotation, worldRotation, 1f);
+    }
+
+    // 텍스쳐 호출 및 비동기 요청
+    void RequestCameraReadback()
+    {
+        // 비동기 작동중일시 그냥 리턴
+        if (readbackPending) return;
+
+        Texture texture = passthroughCameraAccess.GetTexture();
+
+        if (texture == null) return;
+
+        readbackPending = true;
+
+        UnityEngine.Debug.Log("readback 요청");
+        // 비동기 요청 및 콜백함수 설정
+        AsyncGPUReadback.Request(texture, 0, OnReadbackComplete);
+    }
+
+    // 콜백 함수
+    void OnReadbackComplete(AsyncGPUReadbackRequest request)
+    {
+        readbackPending = false;
+
+        if (request.hasError)
+        {
+            UnityEngine.Debug.LogWarning("GPU Readback Error");
+            return;
+        }
+        UnityEngine.Debug.Log($"Readback 완료, 데이터 크기: {request.GetData<Color32>().Length}");
     }
 
     // passthrough로 받은 영상 opencv용으로 전처리
